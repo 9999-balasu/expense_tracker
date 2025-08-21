@@ -3,9 +3,9 @@ from datetime import datetime
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.linear_model import LinearRegression
 import pandas as pd
 import altair as alt
+import io
 
 st.set_page_config(page_title="AI Expense Tracker")
 
@@ -45,27 +45,101 @@ with st.form("expense_form"):
         })
         st.success(f"Added: {desc} - ₹{amount} ({category})")
 
-# ---------- Show Expenses ----------
-st.header("All Expenses")
-for exp in st.session_state.expenses:
-    st.write(f"{exp['description']} - ₹{exp['amount']} ({exp['category']})")
-
-# ---------- Analytics ----------
-st.header("Analytics")
+# ---------- Convert to DataFrame ----------
 if st.session_state.expenses:
     df = pd.DataFrame(st.session_state.expenses)
-    chart_data = df.groupby('category')['amount'].sum().reset_index()
+    df['date_only'] = df['date'].dt.date
+    df['month'] = df['date'].dt.to_period('M').astype(str)
+
+# ---------- Sidebar Filters ----------
+st.sidebar.header("Filters & Budgets")
+if st.session_state.expenses:
+    months = sorted(df['month'].unique())
+    categories = sorted(df['category'].unique())
+    
+    selected_month = st.sidebar.selectbox("Select Month", ["All"] + months)
+    selected_category = st.sidebar.selectbox("Select Category", ["All"] + categories)
+    
+    # Budget inputs
+    st.sidebar.subheader("Set Budget per Category")
+    budgets = {}
+    for cat in categories:
+        budgets[cat] = st.sidebar.number_input(f"{cat} Budget", min_value=0.0, step=10.0)
+    
+    # Apply filters
+    filtered_df = df.copy()
+    if selected_month != "All":
+        filtered_df = filtered_df[filtered_df['month'] == selected_month]
+    if selected_category != "All":
+        filtered_df = filtered_df[filtered_df['category'] == selected_category]
+else:
+    filtered_df = pd.DataFrame()
+    budgets = {}
+
+# ---------- Show Expenses ----------
+st.header("All Expenses")
+if not filtered_df.empty:
+    total_amount = filtered_df['amount'].sum()
+    st.subheader(f"Total Expenses: ₹{total_amount:.2f}")
+    for _, exp in filtered_df.iterrows():
+        st.write(f"{exp['description']} - ₹{exp['amount']} ({exp['category']})")
+else:
+    st.write("No expenses to show for selected filters.")
+
+# ---------- Category Analytics ----------
+st.header("Category Analytics")
+if not filtered_df.empty:
+    chart_data = filtered_df.groupby('category')['amount'].sum().reset_index()
     chart = alt.Chart(chart_data).mark_bar().encode(
         x='category', y='amount', color='category'
     )
     st.altair_chart(chart, use_container_width=True)
 
-# ---------- Future Expense Prediction ----------
-st.header("Next Day Expense Prediction")
+# ---------- Monthly Breakdown ----------
+st.header("Monthly Breakdown")
 if st.session_state.expenses:
-    amounts = np.array([e['amount'] for e in st.session_state.expenses]).reshape(-1,1)
-    days = np.arange(len(st.session_state.expenses)).reshape(-1,1)
-    model_pred = LinearRegression()
-    model_pred.fit(days, amounts)
-    pred = model_pred.predict(np.array([[len(st.session_state.expenses)]]))[0][0]
-    st.write(f"Predicted next expense: ₹{pred:.2f}")
+    month_data = df.groupby('month')['amount'].sum().reset_index()
+    month_chart = alt.Chart(month_data).mark_bar().encode(
+        x='month', y='amount', color='month'
+    )
+    st.altair_chart(month_chart, use_container_width=True)
+
+# ---------- Next Month Expense Prediction ----------
+st.header("Next Month Expense Prediction")
+if not filtered_df.empty:
+    daily_totals = filtered_df.groupby('date_only')['amount'].sum().values
+    avg_daily = daily_totals.mean()
+    next_month_pred = avg_daily * 30  # Predict for 30 days
+    st.write(f"Predicted total expense for next month: ₹{next_month_pred:.2f}")
+else:
+    st.write("No data to predict next month expense.")
+
+# ---------- Budget Alerts ----------
+st.header("Budget Alerts")
+if budgets and not filtered_df.empty:
+    spent_per_category = filtered_df.groupby('category')['amount'].sum()
+    alerts = []
+    for cat, budget in budgets.items():
+        spent = spent_per_category.get(cat, 0)
+        if spent > budget > 0:
+            alerts.append(f"⚠️ {cat} exceeded budget! Spent ₹{spent:.2f} / Budget ₹{budget:.2f}")
+    if alerts:
+        for alert in alerts:
+            st.error(alert)
+    else:
+        st.success("No budgets exceeded!")
+else:
+    st.write("Set budgets to see alerts.")
+
+# ---------- Download Report ----------
+st.header("Download Report")
+if not filtered_df.empty:
+    csv = filtered_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download CSV",
+        data=csv,
+        file_name=f'expense_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+        mime='text/csv'
+    )
+else:
+    st.write("No data available to download.")
