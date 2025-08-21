@@ -1,12 +1,11 @@
 import streamlit as st
-from PIL import Image
-import pytesseract
-import re
 from datetime import datetime
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LinearRegression
+import pandas as pd
+import altair as alt
 
 st.set_page_config(page_title="AI Expense Tracker")
 
@@ -46,25 +45,6 @@ with st.form("expense_form"):
         })
         st.success(f"Added: {desc} - ₹{amount} ({category})")
 
-# ---------- Upload Receipt ----------
-st.header("Upload Receipt (OCR)")
-uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    st.image(image, caption='Uploaded Receipt', use_column_width=True)
-    text = pytesseract.image_to_string(image)
-    amount_match = re.search(r'\d+(\.\d{1,2})?', text)
-    amount = float(amount_match.group()) if amount_match else 0
-    description = text.strip().replace("\n"," ")
-    category = predict_category(description)
-    st.session_state.expenses.append({
-        "description": description[:50],
-        "amount": amount,
-        "category": category,
-        "date": datetime.now()
-    })
-    st.success(f"Extracted: {description[:50]} - ₹{amount} ({category})")
-
 # ---------- Show Expenses ----------
 st.header("All Expenses")
 for exp in st.session_state.expenses:
@@ -72,9 +52,6 @@ for exp in st.session_state.expenses:
 
 # ---------- Analytics ----------
 st.header("Analytics")
-import pandas as pd
-import altair as alt
-
 if st.session_state.expenses:
     df = pd.DataFrame(st.session_state.expenses)
     chart_data = df.groupby('category')['amount'].sum().reset_index()
